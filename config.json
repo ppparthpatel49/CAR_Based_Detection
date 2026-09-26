@@ -24,6 +24,7 @@
   "alerts": {
     "enabled": true,
     "send_telegram": true,
+    "daily_summary": true,
     "gtt_trigger": true,
     "car_flip": true,
     "daily_move_pct": 3.0,

@@ -148,6 +148,7 @@ Expected output shape:
 Common flags: `--repo owner/name` · `--lookback HOURS` · `--dry-run` · `--config path` · `-o file`
 `download` flags: `--list nifty|custom|both` · `--period 6mo|1y|2y|5y|max` · `--interval 1d|1wk`
 `report` flags: `--telegram` · `--log PATH` · `--log-all` · `--no-log` · `--csv PATH` · `--car-days 10` · `--message-out PATH`
+`alerts` flags: `--force` (re-send everything) · `--no-summary` · `--no-refresh` · `--no-send` · `--threshold X` · `--dry-run`
 
 Optional (after `pip install -e .`): the same CLI is available as **`repo-alerts`**.
 
@@ -307,6 +308,45 @@ Notes:
 - Change cadence by editing the `cron` line; e.g. twice daily (1 PM & 5 PM IST):
   `'30 7,11 * * *'`, or during market hours: `'15 4-10 * * 1-5'`.
 
+### 🛟 Troubleshooting — "I am not receiving Telegram alerts"
+
+Work through this checklist in order:
+
+1. **Test your credentials first** (locally, with the env vars set):
+   ```bash
+   export TELEGRAM_BOT_TOKEN="123456:AAE..."
+   export TELEGRAM_CHAT_ID="-100..."
+   python -m telegram_repo_alerts test      # ← must arrive as a ping within seconds
+   ```
+   No ping → fix bot token / chat id (see Quick start step 2). The bot must have
+   seen at least one message from you, and for groups/channels it must be an admin.
+
+2. **Try a forced alert run** (bypasses all de-duplication):
+   ```bash
+   python -m telegram_repo_alerts alerts --no-refresh --force
+   ```
+   You should receive the full current event list. If this works, the pipe is fine
+   and earlier silence was just de-dup/quiet days.
+
+3. **Check the diagnostics line** printed by every run — it states exactly what
+   happened: `📨 Telegram: ✅ ... SENT` / `already sent today` /
+   `daily_summary is disabled` / `skipped (--no-send)`.
+
+4. **For automatic 5 PM runs (GitHub Actions):**
+   - Is the repo actually **pushed to GitHub** with this code? (`git remote -v` must show a remote)
+   - Are the secrets named exactly `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`?
+   - Is the **Actions** tab enabled, and is `market-alerts.yml` on the **default branch**?
+   - Open the latest workflow run (must be ✅) and read the *Check alerts* step log —
+     the same diagnostics print there. A failed step = error shown in the log.
+
+5. **Failed sends never burn alerts** (bug fixed): if credentials are missing or
+   Telegram errors, nothing is marked as sent — the run exits with a clear `❌`
+   and retries next time. State is only saved **after** a successful send.
+
+6. **Quiet-day silence is gone**: with `alerts.daily_summary: true` (default) you
+   get a `✅ Daily Market Check` message **every scheduled run**, even with 0 events.
+   Disable with `--no-summary` if you prefer silence.
+
 ## 🕘 Making it run automatically — 3 options
 
 ### Option A — The built-in Python scheduler (simplest) ✅
@@ -390,6 +430,7 @@ docker run -d --name repo-alerts --restart unless-stopped \
 | `report.send_telegram` | Auto-send the report as a Telegram message on every `report` run | `false` |
 | `alerts.enabled` | Master switch for the alert engine | `true` |
 | `alerts.send_telegram` | Send detected alerts to Telegram (off = print/log only) | `true` |
+| `alerts.daily_summary` | Always send a short daily "✅ Daily Market Check" on quiet days | `true` |
 | `alerts.gtt_trigger` | Alert when a CAR-positive stock crosses last week's high | `true` |
 | `alerts.car_flip` | Alert when CAR flips positive 🟢 / negative 🔴 | `true` |
 | `alerts.daily_move_pct` | Alert on daily move ≥ this % (0 disables) | `3.0` |
