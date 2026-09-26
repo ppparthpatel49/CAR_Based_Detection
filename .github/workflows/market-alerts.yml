@@ -1,0 +1,69 @@
+name: 🚨 Market Alerts → Telegram
+
+# GitHub Actions is used ONLY as a free cron runner — all logic is pure Python
+# (`python -m telegram_repo_alerts alerts`). The workflow:
+#   1. refreshes NSE quotes via yfinance
+#   2. detects GTT-trigger crossings, CAR flips and ±3% moves
+#   3. sends ONE Telegram message only if there are NEW alerts (de-dup state)
+#   4. commits logs/alerts_state.json back to the repo so alerts never repeat
+#
+# Schedule: EVERY DAY at 17:15 IST (5:15 PM, after market close) = 11:15 UTC.
+# 17:15 IST = 11:15 UTC — run any time after 15:30 IST close to capture the
+# full day's GTT crossings, CAR flips and ±daily_move_pct moves in one message.
+# Dedup state makes weekend runs harmless (no data change → no new alerts).
+
+on:
+  schedule:
+    - cron: '15 11 * * *'
+  workflow_dispatch:
+
+# Needed to push the de-dup state file back to the repository.
+permissions:
+  contents: write
+
+# Never run two alert checks concurrently (manual + scheduled overlap).
+concurrency:
+  group: market-alerts
+  cancel-in-progress: false
+
+jobs:
+  alerts:
+    name: Check market alerts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: 📦 Install dependencies (yfinance)
+        run: pip install -r requirements.txt
+
+      - name: 🚨 Check alerts & send to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ vars.TELEGRAM_MESSAGE_THREAD_ID }}
+        run: python -m telegram_repo_alerts alerts
+
+      - name: 💾 Commit de-dup state
+        run: |
+          if [ -f logs/alerts_state.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add logs/alerts_state.json
+            if git diff --cached --quiet; then
+              echo "State unchanged — nothing to commit."
+            else
+              git pull --rebase origin "${GITHUB_REF_NAME}" || true
+              git commit -m "chore: update alerts de-dup state [skip ci]"
+              git push
+            fi
+          else
+            echo "No state file produced — skipping commit."
+          fi
