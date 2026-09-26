@@ -8,12 +8,16 @@ Alert types (all toggleable in config.json → "alerts"):
     (🟢) or positive → "Avoid Hold" (🔴).
   * daily_move  — a stock moved more than `daily_move_pct` (default 3%)
     versus its previous close.
+  * daily_summary — (default ON) even on a quiet day, send a short daily
+    confirmation at the scheduled 5 PM run so you always know the system is alive.
 
-De-duplication: every alert gets a key (type:symbol:period) that is stored in
-`logs/alerts_state.json`. Already-sent keys are skipped, so the GitHub Actions
-workflow (or any scheduler) can run as often as it likes without spamming.
-The state file is committed back to the repo by the workflow so it survives
-across ephemeral runners.
+De-duplication: every alert gets a key (type:symbol:period) stored in
+`logs/alerts_state.json`; the GitHub Actions workflow commits it back so it
+survives across ephemeral runners.
+
+CRITICAL ORDERING (bug fixed): credentials are validated and the Telegram
+message is SENT *before* any state is written. A failed/missing-credential
+send therefore never marks alerts as "sent" — they are retried next run.
 
 Standard library only (yfinance is used indirectly via market_data).
 """
@@ -73,11 +77,11 @@ def _prune_sent(state: dict) -> None:
 
 # ------------------------------------------------------------------- computations
 def _monday(d: datetime) -> datetime:
-    return (d - timedelta(days=d.weekday()))
+    return d - timedelta(days=d.weekday())
 
 
 def completed_week_bounds(now: datetime | None = None) -> tuple[str, str]:
-    """Mon–Fri of the week BEFORE the current calendar week (the week whose
+    """Mon–Fri of the week BEFORE the current calendar week (the level whose
     high is the live GTT trigger during the current week)."""
     now = now or datetime.now(IST)
     prev_mon = _monday(now) - timedelta(days=7)
@@ -110,15 +114,49 @@ def _iso_tag(date_str: str) -> str:
         return date_str
 
 
+# ------------------------------------------------------------------- formatting
+def format_alerts_message(alerts: list[dict], now: datetime, *,
+                          baseline: bool = False, footer: str = "") -> str:
+    head = f"🚨 <b>Market Alerts</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST"
+    if baseline:
+        head += f"\nℹ️ First run: baseline saved ({len(alerts)} event(s))"
+    body = "\n".join(a["text"] for a in alerts)
+    parts = [head, "", body]
+    if footer:
+        parts += ["", footer]
+    parts += ["", "<i>Educational only — not investment advice.</i>"]
+    return "\n".join(parts)
+
+
+def format_summary_message(report: dict, now: datetime, *, baseline: bool = False) -> str:
+    lines = [
+        f"✅ <b>Daily Market Check</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST",
+        "No new alerts today.",
+        f"📊 CAR positive: <b>{len(report['positives'])}</b> (Buy/Average Out) · "
+        f"⛔ avoid: {report['scanned'] - len(report['positives'])} · "
+        f"data as of {report['data_as_of']}",
+    ]
+    if report.get("near_misses"):
+        nm = ", ".join(f"{r['symbol']}({r['car_streak']})" for r in report["near_misses"][:7])
+        lines.append(f"👀 Near-miss: {nm}")
+    if baseline:
+        lines.append("ℹ️ First run: baseline set — future flips will be alerted.")
+    lines.append("<i>Educational only — not investment advice.</i>")
+    return "\n".join(lines)
+
+
 # -------------------------------------------------------------------------- main
 def check_alerts(config: dict | None = None, *, refresh: bool = True,
                  dry_run: bool = False, send: bool = True,
-                 threshold: float | None = None, car_days: int | None = None
-                 ) -> dict:
+                 threshold: float | None = None, car_days: int | None = None,
+                 force: bool = False, summary: bool | None = None) -> dict:
     """
     Detect new market alerts, de-duplicate against state, optionally send to
-    Telegram. Returns a summary dict. `dry_run` prints but never persists or
-    sends; `send=False` persists state but skips Telegram.
+    Telegram. Returns a summary dict.
+
+    Ordering guarantee: when a message will be sent, Telegram credentials are
+    validated and the send happens BEFORE any state mutation — a failure never
+    burns the alert keys.
     """
     from .market_data import download_history, resolve_lists
     from .sender import send_text
@@ -129,6 +167,7 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
 
     want_gtt = bool(alert_cfg.get("gtt_trigger", True))
     want_flip = bool(alert_cfg.get("car_flip", True))
+    want_summary = bool(alert_cfg.get("daily_summary", True)) if summary is None else summary
     move_pct = threshold if threshold is not None else float(alert_cfg.get("daily_move_pct", 3.0) or 0)
     want_move = move_pct > 0
     car_days = car_days or int(alert_cfg.get("car_days", 10))
@@ -159,13 +198,21 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
     positives = {r["symbol"] for r in report["positives"]}
     by_sym = {r["symbol"]: r for r in report["results"]}
     now = datetime.now(IST)
-    today_tag = now.strftime("%Y-%m-%d")
-
     state = load_state(state_file)
-    sent: dict[str, str] = state.get("sent", {})
-    baseline = not state.get("positives") and not sent  # first ever run
+    sent: dict[str, str] = dict(state.get("sent", {}))   # copy — committed only after success
+    baseline = not state.get("positives") and not state.get("sent")
 
     alerts: list[dict] = []
+    new_keys: list[str] = []
+    filtered = 0
+
+    def remember(key: str, payload: dict) -> None:
+        nonlocal filtered
+        if not force and key in sent:
+            filtered += 1
+            return
+        new_keys.append(key)
+        alerts.append(payload)
 
     # --- 3) GTT trigger alerts --------------------------------------------
     if want_gtt:
@@ -177,13 +224,9 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
             close, _prev, _d = latest_and_prev_closes(prices.get(sym, []))
             if close and close >= trig:
                 row = by_sym.get(sym, {})
-                key = f"gtt:{sym}:{wk}"
-                if key in sent:
-                    continue
-                sent[key] = now.isoformat(timespec="seconds")
                 qty = row.get("qty_5000", "")
-                alerts.append({
-                    "key": key, "icon": "🚨", "symbol": sym,
+                remember(f"gtt:{sym}:{wk}", {
+                    "icon": "🚨", "symbol": sym,
                     "text": (f"🚨 <b>{row.get('nse_code', 'NSE:' + sym)}</b> crossed its "
                              f"GTT trigger <b>{trig}</b> — now {close} "
                              f"(limit {round(trig + 0.10, 2)}"
@@ -193,27 +236,19 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
     # --- 4) CAR flip alerts -------------------------------------------------
     if want_flip:
         prev_pos = set(state.get("positives", []))
-        wk = _iso_tag(report["data_as_of"] or today_tag)
+        wk = _iso_tag(report["data_as_of"] or now.strftime("%Y-%m-%d"))
         if not baseline:
             for sym in sorted(positives - prev_pos):
-                key = f"car_up:{sym}:{wk}"
-                if key in sent:
-                    continue
-                sent[key] = now.isoformat(timespec="seconds")
                 row = by_sym.get(sym, {})
-                alerts.append({
-                    "key": key, "icon": "🟢", "symbol": sym,
+                remember(f"car_up:{sym}:{wk}", {
+                    "icon": "🟢", "symbol": sym,
                     "text": (f"🟢 <b>{row.get('nse_code', 'NSE:' + sym)}</b> CAR flipped "
                              f"POSITIVE → <b>Buy/Average Out</b> "
                              f"(streak {row.get('car_streak', '?')}d, CMP {row.get('cmp', '?')})"),
                 })
             for sym in sorted(prev_pos - positives):
-                key = f"car_down:{sym}:{wk}"
-                if key in sent:
-                    continue
-                sent[key] = now.isoformat(timespec="seconds")
-                alerts.append({
-                    "key": key, "icon": "🔴", "symbol": sym,
+                remember(f"car_down:{sym}:{wk}", {
+                    "icon": "🔴", "symbol": sym,
                     "text": (f"🔴 <b>NSE:{sym}</b> CAR flipped NEGATIVE → "
                              f"<b>Avoid Hold</b> — delete any pending GTT"),
                 })
@@ -229,18 +264,51 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
             pct = (close - prev_close) / prev_close * 100
             if abs(pct) < move_pct:
                 continue
-            key = f"move:{sym}:{d}"
-            if key in sent:
-                continue
-            sent[key] = now.isoformat(timespec="seconds")
             arrow = "📈" if pct > 0 else "📉"
-            alerts.append({
-                "key": key, "icon": arrow, "symbol": sym,
+            remember(f"move:{sym}:{d}", {
+                "icon": arrow, "symbol": sym,
                 "text": (f"{arrow} <b>NSE:{sym}</b> {pct:+.1f}% "
                          f"({prev_close:.2f} → {close:.2f})"),
             })
 
-    # --- 6) persist state / baseline ----------------------------------------
+    # --- 6) build the message (alerts, or daily summary on quiet days) --------
+    footer = (f"📊 CAR positive: <b>{len(report['positives'])}</b> · "
+              f"data as of {report['data_as_of']}") if want_summary else ""
+    message = ""
+    msg_kind = ""
+    skip_reason = ""
+    if alerts:
+        message = format_alerts_message(alerts, now, baseline=baseline, footer=footer)
+        msg_kind = "alerts"
+    elif want_summary:
+        summary_key = f"summary:{now.strftime('%Y-%m-%d')}"
+        if force or summary_key not in sent:
+            message = format_summary_message(report, now, baseline=baseline)
+            msg_kind = "summary"
+            new_keys.append(summary_key)
+        else:
+            skip_reason = "daily summary already sent today (use --force to re-send)"
+    else:
+        skip_reason = "no new events and daily_summary is disabled"
+
+    # --- 7) SEND FIRST, then persist state (bug fix) -------------------------
+    message_sent = False
+    if message and send and not dry_run:
+        token, chat_id, thread_id = cfg.telegram_credentials(require=True)  # BEFORE any state write
+        send_text(message, token=token, chat_id=chat_id, thread_id=thread_id)
+        message_sent = True
+        for k in new_keys:
+            sent[k] = now.isoformat(timespec="seconds")
+    elif message and not send and not dry_run:
+        print(message)        # explicit --no-send / send_telegram=false: record only
+        for k in new_keys:
+            sent[k] = now.isoformat(timespec="seconds")
+    elif message and dry_run:
+        print("-" * 60)
+        print(f"[DRY RUN] would send ({msg_kind}, {len(message)} chars):")
+        print(message)
+        print("-" * 60)
+
     state["positives"] = sorted(positives)
     state["sent"] = sent
     _prune_sent(state)
@@ -249,33 +317,7 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
         save_state(state_file, state)
         persisted = True
 
-    # --- 7) send -------------------------------------------------------------
-    message = ""
-    if alerts:
-        message = format_alerts_message(alerts, now, baseline=baseline)
-        if send and not dry_run:
-            _token, _chat, _thread = cfg.telegram_credentials(require=True)
-            send_text(message, token=_token, chat_id=_chat, thread_id=_thread)
-        elif dry_run:
-            print("-" * 60)
-            print(f"[DRY RUN] would send {len(alerts)} alert(s):")
-            print(message)
-            print("-" * 60)
-        else:
-            print(message)
-    else:
-        print("ℹ️  No new alerts.")
-
-    return {"alerts": alerts, "count": len(alerts), "baseline": baseline,
-            "positives": sorted(positives), "state_saved": persisted,
-            "message": message}
-
-
-def format_alerts_message(alerts: list[dict], now: datetime, baseline: bool = False) -> str:
-    head = (f"🚨 <b>Market Alerts</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST"
-            if not baseline else
-            f"🚨 <b>Market Alerts</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST\n"
-            f"ℹ️ First run: baseline saved ({len(alerts)} event(s))")
-    body = "\n".join(a["text"] for a in alerts)
-    return (f"{head}\n\n{body}\n\n"
-            f"<i>Educational only — not investment advice.</i>")
+    return {"alerts": alerts, "count": len(alerts), "filtered": filtered,
+            "baseline": baseline, "positives": sorted(positives),
+            "state_saved": persisted, "message": message, "message_sent": message_sent,
+            "msg_kind": msg_kind, "skip_reason": skip_reason}

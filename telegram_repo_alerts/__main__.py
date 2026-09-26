@@ -231,15 +231,40 @@ def cmd_alerts(args) -> int:
         print("ℹ️  alerts.enabled = false in config.json — nothing to do.")
         return 0
     dry = args.dry_run or cfg.env_dry_run()
-    summary = check_alerts(
+    send = (not args.no_send) and bool(alert_cfg.get("send_telegram", True))
+    summary = False if args.no_summary else None  # None → use config default
+
+    summary_r = check_alerts(
         config,
         refresh=not args.no_refresh,
         dry_run=dry,
-        send=not args.no_send and alert_cfg.get("send_telegram", True),
+        send=send,
         threshold=args.threshold,
+        force=args.force,
+        summary=summary,
     )
-    print(f"✅ {summary['count']} new alert(s) · state "
-          f"{'saved' if summary['state_saved'] else 'not written (dry-run)'}")
+
+    # --- clear diagnostics: say exactly what happened and why ---------------
+    n, filtered = summary_r["count"], summary_r["filtered"]
+    print(f"🔎 {n} new event(s) detected" +
+          (f" · {filtered} already sent earlier (use --force to resend)" if filtered else ""))
+    if dry:
+        state_note = "state NOT written (dry-run)"
+        send_note = "would send (dry-run)" if summary_r["message"] else \
+            (summary_r.get("skip_reason") or "nothing to send")
+    elif summary_r["message_sent"]:
+        state_note = "state saved"
+        send_note = f"✅ Telegram {summary_r['msg_kind']} message SENT"
+    elif summary_r["message"] and not send:
+        state_note = "state saved (no-send mode)"
+        send_note = "⏭️ Telegram skipped (--no-send / send_telegram=false)"
+    elif summary_r["message"]:
+        state_note = "state saved"
+        send_note = "✅ sent"
+    else:
+        state_note = "state saved"
+        send_note = f"ℹ️ {summary_r.get('skip_reason') or 'nothing to send'}"
+    print(f"📨 Telegram: {send_note} · {state_note}")
     return 0
 
 
@@ -333,6 +358,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="update de-dup state but do not call Telegram")
     p_al.add_argument("--threshold", type=float,
                       help="override daily_move_pct (e.g. 2.5; 0 disables)")
+    p_al.add_argument("--force", action="store_true",
+                      help="ignore de-dup state and (re)send everything detected")
+    p_al.add_argument("--no-summary", action="store_true",
+                      help="do not send the daily summary on quiet days")
     p_al.add_argument("--dry-run", action="store_true",
                       help="print alerts; no Telegram call, no state write")
     p_al.set_defaults(func=cmd_alerts)
@@ -349,8 +378,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except (SystemExit, RuntimeError):
+    except SystemExit:
         raise
+    except RuntimeError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("\n👋 Interrupted.")
         return 130
