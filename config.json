@@ -1,0 +1,53 @@
+{
+  "monitor_repo": "",
+  "lookback_hours": 24,
+  "max_events": 120,
+  "schedule": {
+    "mode": "daily",
+    "time": "09:00",
+    "timezone": "Asia/Kolkata"
+  },
+  "data": {
+    "source": "both",
+    "nifty_csv": "data/nifty_100.csv",
+    "watchlist_csv": "data/stock_list.csv",
+    "output_dir": "data/prices",
+    "period": "2y",
+    "interval": "1d",
+    "suffix": ".NS"
+  },
+  "report": {
+    "log": "logs/car_log.csv",
+    "car_days": 10,
+    "send_telegram": false
+  },
+  "alerts": {
+    "enabled": true,
+    "send_telegram": true,
+    "gtt_trigger": true,
+    "car_flip": true,
+    "daily_move_pct": 3.0,
+    "car_days": 10,
+    "state_file": "logs/alerts_state.json"
+  },
+  "enabled_events": [
+    "push",
+    "issues",
+    "pull_request",
+    "star",
+    "fork",
+    "release",
+    "create",
+    "delete",
+    "comment",
+    "review",
+    "member",
+    "public"
+  ],
+  "message": {
+    "header": "📦 <b>GitHub Repo Digest</b>",
+    "show_empty_note": true,
+    "empty_note": "✅ No new activity in this window.",
+    "footer": "🤖 automated by telegram_repo_alerts (pure Python)"
+  }
+}

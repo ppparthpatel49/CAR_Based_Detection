@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-repo-alerts"
+version = "1.0.0"
+description = "Pure-Python automation: GitHub repository events -> scheduled Telegram digest"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = ["yfinance>=0.2.40"]   # market data; everything else is stdlib
+keywords = ["telegram", "github", "alerts", "automation", "digest"]
+
+[project.scripts]
+repo-alerts = "telegram_repo_alerts.__main__:main"
+
+[tool.setuptools]
+packages = ["telegram_repo_alerts"]

@@ -1,0 +1,25 @@
+# Local artifacts (regenerable)
+digest.txt
+sample_events.json
+*.log
+
+# Downloaded market data — re-generate with: python -m telegram_repo_alerts download
+data/prices/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Secrets (never commit)
+.env
+*.token
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
