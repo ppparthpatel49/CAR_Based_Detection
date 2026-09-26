@@ -8,8 +8,11 @@ Alert types (all toggleable in config.json → "alerts"):
     (🟢) or positive → "Avoid Hold" (🔴).
   * daily_move  — a stock moved more than `daily_move_pct` (default 3%)
     versus its previous close.
-  * daily_summary — (default ON) even on a quiet day, send a short daily
-    confirmation at the scheduled 5 PM run so you always know the system is alive.
+  * daily_summary — (default ON) the scheduled 5 PM run ALWAYS sends the
+    CAR result table (same columns/rows as the reference sheet). Event lines
+    are prepended when there are any; otherwise the table alone ("No new
+    alerts today."). At most ONE routine message per day (summary:{date}
+    key is recorded on every send; use --force to re-send).
 
 De-duplication: every alert gets a key (type:symbol:period) stored in
 `logs/alerts_state.json`; the GitHub Actions workflow commits it back so it
@@ -115,34 +118,11 @@ def _iso_tag(date_str: str) -> str:
 
 
 # ------------------------------------------------------------------- formatting
-def format_alerts_message(alerts: list[dict], now: datetime, *,
-                          baseline: bool = False, footer: str = "") -> str:
-    head = f"🚨 <b>Market Alerts</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST"
-    if baseline:
-        head += f"\nℹ️ First run: baseline saved ({len(alerts)} event(s))"
-    body = "\n".join(a["text"] for a in alerts)
-    parts = [head, "", body]
-    if footer:
-        parts += ["", footer]
-    parts += ["", "<i>Educational only — not investment advice.</i>"]
-    return "\n".join(parts)
-
-
-def format_summary_message(report: dict, now: datetime, *, baseline: bool = False) -> str:
-    lines = [
-        f"✅ <b>Daily Market Check</b> — {now.strftime('%a %d %b %Y, %H:%M')} IST",
-        "No new alerts today.",
-        f"📊 CAR positive: <b>{len(report['positives'])}</b> (Buy/Average Out) · "
-        f"⛔ avoid: {report['scanned'] - len(report['positives'])} · "
-        f"data as of {report['data_as_of']}",
-    ]
-    if report.get("near_misses"):
-        nm = ", ".join(f"{r['symbol']}({r['car_streak']})" for r in report["near_misses"][:7])
-        lines.append(f"👀 Near-miss: {nm}")
-    if baseline:
-        lines.append("ℹ️ First run: baseline set — future flips will be alerted.")
-    lines.append("<i>Educational only — not investment advice.</i>")
-    return "\n".join(lines)
+def build_daily_message(report: dict, events: list[dict], now: datetime, *,
+                        baseline: bool = False) -> str:
+    """The daily Telegram message: new events (if any) + the CAR result
+    table exactly as the reference sheet shows it (car.format_daily_message)."""
+    return car.format_daily_message(report, now, events=events, baseline=baseline)
 
 
 # -------------------------------------------------------------------------- main
@@ -271,23 +251,27 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
                          f"({prev_close:.2f} → {close:.2f})"),
             })
 
-    # --- 6) build the message (alerts, or daily summary on quiet days) --------
-    footer = (f"📊 CAR positive: <b>{len(report['positives'])}</b> · "
-              f"data as of {report['data_as_of']}") if want_summary else ""
+    # --- 6) build THE daily message (events + CAR result table) --------------
+    # The Telegram message always mirrors the reference sheet: any new events
+    # on top, then the full CAR result table (sorted by Difference from 200
+    # DMA ascending). summary:{date} is recorded on EVERY send → at most one
+    # routine message per calendar day.
+    summary_key = f"summary:{now.strftime('%Y-%m-%d')}"
     message = ""
     msg_kind = ""
     skip_reason = ""
     if alerts:
-        message = format_alerts_message(alerts, now, baseline=baseline, footer=footer)
+        # events exist → one combined message (events + table), always sent
+        message = build_daily_message(report, alerts, now, baseline=baseline)
         msg_kind = "alerts"
+        new_keys.append(summary_key)
     elif want_summary:
-        summary_key = f"summary:{now.strftime('%Y-%m-%d')}"
         if force or summary_key not in sent:
-            message = format_summary_message(report, now, baseline=baseline)
+            message = build_daily_message(report, [], now, baseline=baseline)
             msg_kind = "summary"
             new_keys.append(summary_key)
         else:
-            skip_reason = "daily summary already sent today (use --force to re-send)"
+            skip_reason = "daily CAR result already sent today (use --force to re-send)"
     else:
         skip_reason = "no new events and daily_summary is disabled"
 

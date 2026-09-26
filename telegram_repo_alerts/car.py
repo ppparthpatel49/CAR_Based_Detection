@@ -192,6 +192,45 @@ def append_log(report: dict, log_path: str | Path, log_all: bool = False) -> int
 
 
 # --------------------------------------------------------------------- rendering
+def positives_sorted(report: dict) -> list[dict]:
+    """Sort like the reference sheet: Difference from 200 DMA ascending."""
+    def key(r):
+        d = r.get("diff_200dma_pct")
+        return (0, d, r["symbol"]) if d != "" else (1, 0.0, r["symbol"])
+    return sorted(report["positives"], key=key)
+
+
+def pre_table(report: dict) -> str:
+    """Monospace table mirroring the reference sheet columns & order."""
+    rows = positives_sorted(report)
+    if not rows:
+        return "<pre>⚪ No CAR-positive stocks this week.</pre>"
+    lines = [
+        f"{'NSE Code':<16}{'CMP':>9}   {'Difference from 200 DMA':>24}"
+        f"   {'CAR Rating':<18}{'Trigger Price for GTT':>22}",
+    ]
+    for r in rows:
+        diff = f"{r['diff_200dma_pct']}" if r["diff_200dma_pct"] != "" else "n/a"
+        lines.append(f"{r['nse_code']:<16}{r['cmp']:>9}   {diff:>24}"
+                     f"   {r['car_rating']:<18}{r['trigger']:>22}")
+    return "<pre>\n" + "\n".join(lines) + "\n</pre>"
+
+
+def qty_line(report: dict) -> str:
+    rows = positives_sorted(report)
+    if not rows:
+        return ""
+    return "🛒 Limit/qty: " + " · ".join(
+        f"{r['symbol']} qty {r['qty_5000']} @ {r['limit']}" for r in rows)
+
+
+def near_miss_line(report: dict) -> str:
+    if not report.get("near_misses"):
+        return ""
+    nm = ", ".join(f"{r['symbol']}({r['car_streak']})" for r in report["near_misses"][:7])
+    return f"👀 Near-miss: {nm}"
+
+
 def console_report(report: dict) -> str:
     lines = []
     lines.append("=" * 88)
@@ -209,7 +248,7 @@ def console_report(report: dict) -> str:
         header = (f"{'NSE Code':<16}{'CMP':>10}{'200DMA%':>9}  {'CAR Rating':<16}"
                   f"{'Trigger':>10}{'Limit':>9}{'Qty':>5}{'Streak':>7}  FRESH")
         lines.append(header)
-        for r in sorted(report["positives"], key=lambda x: (-x["car_streak"], x["symbol"])):
+        for r in positives_sorted(report):
             lines.append(
                 f"{r['nse_code']:<16}{r['cmp']:>10}{r['diff_200dma_pct']:>9}  "
                 f"{r['car_rating']:<16}{r['trigger']:>10}{r['limit']:>9}"
@@ -222,9 +261,9 @@ def console_report(report: dict) -> str:
 
 
 def format_message(report: dict, log_note: str = "") -> str:
-    """Telegram HTML message mirroring the reference sheet."""
+    """Telegram HTML message for the `report` command (sheet-style)."""
     tag = f"{report['iso_year']}-W{report['iso_week']:02d}"
-    pos = sorted(report["positives"], key=lambda x: (-x["car_streak"], x["symbol"]))
+    pos = positives_sorted(report)
     lines = [
         f"📈 <b>CAR Weekly Report</b> — {tag}",
         f"🗓 {report['week_start']} → {report['week_end']} · data as of "
@@ -232,25 +271,51 @@ def format_message(report: dict, log_note: str = "") -> str:
         f"✅ <b>{len(pos)} CAR positive ({RATING_BUY})</b> · 🆕 fresh: {len(report['fresh'])}"
         f" · ⛔ avoid: {report['scanned'] - len(pos)}",
         "",
+        pre_table(report),
     ]
-    if pos:
-        # monospace table like the sheet
-        lines.append("<pre>")
-        lines.append(f"{'NSE Code':<16}{'CMP':>10}{'vs 200DMA':>11}{'CAR Rating':>18}{'GTT Trigger':>13}")
-        for r in pos:
-            pct = f"{r['diff_200dma_pct']}%" if r["diff_200dma_pct"] != "" else "n/a"
-            lines.append(f"{r['nse_code']:<16}{r['cmp']:>10}{pct:>11}"
-                         f"{r['car_rating']:>18}{r['trigger']:>13}")
-        lines.append("</pre>")
-        qty_note = " · ".join(f"{r['symbol']} qty {r['qty_5000']} @ {r['limit']}"
-                              for r in pos)
-        lines += ["", f"🛒 Limit/qty: {qty_note}"]
-    else:
-        lines.append("⚪ No CAR-positive stocks this week.")
-    if report["near_misses"]:
-        nm = ", ".join(f"{r['symbol']}({r['car_streak']})" for r in report["near_misses"][:7])
-        lines.append(f"👀 Near-miss: {nm}")
+    qty = qty_line(report)
+    if qty:
+        lines += ["", qty]
+    nm = near_miss_line(report)
+    if nm:
+        lines.append(nm)
     if log_note:
-        lines.append(f"📄 {log_note}")
+        lines += ["", f"📄 {log_note}"]
+    lines.append("<i>Educational only — not investment advice.</i>")
+    return "\n".join(lines)
+
+
+def format_daily_message(report: dict, now: datetime, *, events: list[dict] | None = None,
+                         baseline: bool = False) -> str:
+    """
+    The daily 5 PM Telegram message: the CAR result TABLE (exactly what the
+    reference sheet shows), preceded by any new events of the day.
+    """
+    tag = f"{report['iso_year']}-W{report['iso_week']:02d}"
+    pos = positives_sorted(report)
+    events = events or []
+    lines = [
+        f"📈 <b>Daily CAR Result</b> — {now.strftime('%a %d %b %Y')} · {tag}",
+    ]
+    if baseline:
+        lines.append("ℹ️ First run: baseline saved — future flips will be alerted.")
+    if events:
+        lines += ["", f"🚨 <b>{len(events)} new event(s)</b>"]
+        lines += [e["text"] for e in events]
+    else:
+        lines += ["", "No new alerts today."]
+    lines += [
+        "",
+        f"✅ <b>{len(pos)} CAR positive ({RATING_BUY})</b> · "
+        f"⛔ avoid: {report['scanned'] - len(pos)} · data as of {report['data_as_of']}",
+        "",
+        pre_table(report),
+    ]
+    qty = qty_line(report)
+    if qty:
+        lines += ["", qty]
+    nm = near_miss_line(report)
+    if nm:
+        lines.append(nm)
     lines.append("<i>Educational only — not investment advice.</i>")
     return "\n".join(lines)
