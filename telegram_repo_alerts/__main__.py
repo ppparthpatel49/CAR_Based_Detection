@@ -246,8 +246,8 @@ def cmd_alerts(args) -> int:
 
     # --- clear diagnostics: say exactly what happened and why ---------------
     n, filtered = summary_r["count"], summary_r["filtered"]
-    print(f"🔎 {n} new event(s) detected" +
-          (f" · {filtered} already sent earlier (use --force to resend)" if filtered else ""))
+    print(f"🔎 {n} new event(s) detected (diagnostics only — never sent to Telegram)" +
+          (f" · {filtered} already detected earlier" if filtered else ""))
     if dry:
         state_note = "state NOT written (dry-run)"
         send_note = "would send (dry-run)" if summary_r["message"] else \

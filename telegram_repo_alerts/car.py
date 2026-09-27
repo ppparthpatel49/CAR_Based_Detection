@@ -285,26 +285,16 @@ def format_message(report: dict, log_note: str = "") -> str:
     return "\n".join(lines)
 
 
-def format_daily_message(report: dict, now: datetime, *, events: list[dict] | None = None,
-                         baseline: bool = False) -> str:
+def format_daily_message(report: dict, now: datetime) -> str:
     """
-    The daily 5 PM Telegram message: the CAR result TABLE (exactly what the
-    reference sheet shows), preceded by any new events of the day.
+    The daily 5 PM Telegram message: ONLY the CAR result TABLE — exactly the
+    reference sheet's columns/rows. No event lines (GTT/flip/move events are
+    reported in the console/Actions run log instead).
     """
     tag = f"{report['iso_year']}-W{report['iso_week']:02d}"
     pos = positives_sorted(report)
-    events = events or []
     lines = [
         f"📈 <b>Daily CAR Result</b> — {now.strftime('%a %d %b %Y')} · {tag}",
-    ]
-    if baseline:
-        lines.append("ℹ️ First run: baseline saved — future flips will be alerted.")
-    if events:
-        lines += ["", f"🚨 <b>{len(events)} new event(s)</b>"]
-        lines += [e["text"] for e in events]
-    else:
-        lines += ["", "No new alerts today."]
-    lines += [
         "",
         f"✅ <b>{len(pos)} CAR positive ({RATING_BUY})</b> · "
         f"⛔ avoid: {report['scanned'] - len(pos)} · data as of {report['data_as_of']}",

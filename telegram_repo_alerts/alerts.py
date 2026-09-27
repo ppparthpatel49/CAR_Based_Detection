@@ -1,18 +1,21 @@
 """
-alerts.py — Market alert engine: detects events and sends them to Telegram.
+alerts.py — Market alert engine: detects events, sends the daily CAR
+result table to Telegram.
 
-Alert types (all toggleable in config.json → "alerts"):
+Alert types (toggleable in config.json → "alerts") are DETECTED and reported
+in console/Actions-run-log diagnostics only — Telegram never receives event
+lines:
   * gtt_trigger — a CAR-positive stock's price crosses the previous week's
     high (the level where its GTT order would have executed).
   * car_flip    — a stock's CAR status flipped: negative → "Buy/Average Out"
     (🟢) or positive → "Avoid Hold" (🔴).
   * daily_move  — a stock moved more than `daily_move_pct` (default 3%)
     versus its previous close.
-  * daily_summary — (default ON) the scheduled 5 PM run ALWAYS sends the
-    CAR result table (same columns/rows as the reference sheet). Event lines
-    are prepended when there are any; otherwise the table alone ("No new
-    alerts today."). At most ONE routine message per day (summary:{date}
-    key is recorded on every send; use --force to re-send).
+  * daily_summary — (default ON) the ONE Telegram message per day is the
+    CAR result table (same columns/rows as the reference sheet, sorted by
+    Difference from 200 DMA ascending). summary:{date} key is recorded on
+    every send → at most one message per calendar day; use --force to
+    re-send.
 
 De-duplication: every alert gets a key (type:symbol:period) stored in
 `logs/alerts_state.json`; the GitHub Actions workflow commits it back so it
@@ -115,14 +118,6 @@ def _iso_tag(date_str: str) -> str:
         return f"{iso.year}-W{iso.week:02d}"
     except ValueError:
         return date_str
-
-
-# ------------------------------------------------------------------- formatting
-def build_daily_message(report: dict, events: list[dict], now: datetime, *,
-                        baseline: bool = False) -> str:
-    """The daily Telegram message: new events (if any) + the CAR result
-    table exactly as the reference sheet shows it (car.format_daily_message)."""
-    return car.format_daily_message(report, now, events=events, baseline=baseline)
 
 
 # -------------------------------------------------------------------------- main
@@ -251,29 +246,23 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
                          f"({prev_close:.2f} → {close:.2f})"),
             })
 
-    # --- 6) build THE daily message (events + CAR result table) --------------
-    # The Telegram message always mirrors the reference sheet: any new events
-    # on top, then the full CAR result table (sorted by Difference from 200
-    # DMA ascending). summary:{date} is recorded on EVERY send → at most one
-    # routine message per calendar day.
+    # --- 6) build THE daily message: ONLY the CAR result table ---------------
+    # Telegram receives exactly one message per day and it contains nothing
+    # but the sheet-style table. Alert events are detected and shown in the
+    # console/Actions diagnostics only — never in Telegram. summary:{date}
+    # is recorded on EVERY send → at most one message per calendar day.
     summary_key = f"summary:{now.strftime('%Y-%m-%d')}"
     message = ""
     msg_kind = ""
     skip_reason = ""
-    if alerts:
-        # events exist → one combined message (events + table), always sent
-        message = build_daily_message(report, alerts, now, baseline=baseline)
-        msg_kind = "alerts"
-        new_keys.append(summary_key)
-    elif want_summary:
-        if force or summary_key not in sent:
-            message = build_daily_message(report, [], now, baseline=baseline)
-            msg_kind = "summary"
-            new_keys.append(summary_key)
-        else:
-            skip_reason = "daily CAR result already sent today (use --force to re-send)"
+    if not force and summary_key in sent:
+        skip_reason = "daily CAR result already sent today (use --force to re-send)"
+    elif not want_summary:
+        skip_reason = "daily_summary is disabled"
     else:
-        skip_reason = "no new events and daily_summary is disabled"
+        message = car.format_daily_message(report, now)
+        msg_kind = "daily"
+        new_keys.append(summary_key)
 
     # --- 7) SEND FIRST, then persist state (bug fix) -------------------------
     message_sent = False
