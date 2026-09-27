@@ -87,10 +87,12 @@ def _monday(d: datetime) -> datetime:
 
 
 def completed_week_bounds(now: datetime | None = None) -> tuple[str, str]:
-    """Mon–Fri of the week BEFORE the current calendar week (the level whose
-    high is the live GTT trigger during the current week)."""
+    """Mon–Fri of the most recently COMPLETED week — the level where the
+    live GTT sits. On Sat/Sun the week that just ended is this calendar
+    week's own Mon–Fri (not the week before it)."""
     now = now or datetime.now(IST)
-    prev_mon = _monday(now) - timedelta(days=7)
+    monday = _monday(now)
+    prev_mon = monday if now.weekday() >= 5 else monday - timedelta(days=7)
     return prev_mon.date().isoformat(), (prev_mon + timedelta(days=4)).date().isoformat()
 
 

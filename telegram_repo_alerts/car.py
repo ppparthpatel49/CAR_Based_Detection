@@ -9,7 +9,8 @@ Implements the method exactly as in the user's reference sheet:
   * CAR = running average of closes from the year-high date onward.
   * Rating "Buy/Average Out" when that average has risen for >= `car_days`
     (default 10) consecutive trading days; otherwise "Avoid Hold".
-  * GTT trigger = the week's (Mon–Fri) intraday high; limit = +0.10;
+  * GTT trigger = the LAST COMPLETED week's (Mon–Fri) intraday high —
+    the level that stays fixed all week (Sunday-ritual rule); limit = +0.10;
     qty = one ₹5,000 tranche rounded up.
   * Difference from 200 DMA = % above the 200-day simple moving average.
 
@@ -126,12 +127,18 @@ def analyze(sym: str, rows: list[dict], car_days: int, week_start: str,
 
 def week_bounds(prices: dict[str, list[dict]], week_start: str | None = None
                 ) -> tuple[str, str]:
+    """Mon–Fri of the LAST COMPLETED week (the GTT trigger window).
+    While the data's week is still in progress (latest row Mon–Thu), the
+    window is the week before — the trigger must stay fixed all week."""
     latest = max(r["date"] for rows in prices.values() for r in rows)
     if week_start:
         start = week_start
     else:
         d = datetime.fromisoformat(latest)
-        start = (d - timedelta(days=d.weekday())).date().isoformat()
+        monday = d - timedelta(days=d.weekday())
+        if d.weekday() < 4:          # Mon–Thu: this week not finished yet
+            monday -= timedelta(days=7)
+        start = monday.date().isoformat()
     end = (datetime.fromisoformat(start) + timedelta(days=4)).date().isoformat()
     return start, min(end, latest)
 
@@ -145,7 +152,7 @@ def run_analysis(prices_path: str | Path, car_days: int = 10,
     results = [analyze(s, rows, car_days, start, end)
                for s, rows in sorted(prices.items())]
     latest = max(r["date"] for rows in prices.values() for r in rows)
-    iso = datetime.fromisoformat(latest).isocalendar()
+    iso = datetime.fromisoformat(start).isocalendar()   # label = trigger window
     positives = [r for r in results if r["car_positive"]]
     near = sorted((r for r in results if car_days - 5 <= r["car_streak"] < car_days),
                   key=lambda x: -x["car_streak"])
