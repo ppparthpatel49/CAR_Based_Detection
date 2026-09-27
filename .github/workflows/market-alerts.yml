@@ -5,7 +5,7 @@ name: 🚨 Market Alerts → Telegram
 #   1. refreshes NSE quotes via yfinance
 #   2. detects GTT-trigger crossings, CAR flips and ±3% moves
 #   3. sends ONE Telegram message only if there are NEW alerts (de-dup state)
-#   4. commits logs/alerts_state.json back to the repo so alerts never repeat
+#   4. commits logs/alerts_state.json + runs/failures journals back to the repo
 #
 # Schedule: EVERY DAY at 17:15 IST (5:15 PM, after market close) = 11:15 UTC.
 # 17:15 IST = 11:15 UTC — run any time after 15:30 IST close to capture the
@@ -51,19 +51,18 @@ jobs:
           TELEGRAM_MESSAGE_THREAD_ID: ${{ vars.TELEGRAM_MESSAGE_THREAD_ID }}
         run: python -m telegram_repo_alerts alerts
 
-      - name: 💾 Commit de-dup state
+      - name: 💾 Commit de-dup state + run journals
         run: |
-          if [ -f logs/alerts_state.json ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add logs/alerts_state.json
-            if git diff --cached --quiet; then
-              echo "State unchanged — nothing to commit."
-            else
-              git pull --rebase origin "${GITHUB_REF_NAME}" || true
-              git commit -m "chore: update alerts de-dup state [skip ci]"
-              git push
-            fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          staged=0
+          for f in logs/alerts_state.json logs/runs.csv logs/failures.csv; do
+            if [ -f "$f" ]; then git add "$f"; staged=1; fi
+          done
+          if [ "$staged" = "1" ] && ! git diff --cached --quiet; then
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            git commit -m "chore: update alerts state + journals [skip ci]"
+            git push
           else
-            echo "No state file produced — skipping commit."
+            echo "No journal/state changes — nothing to commit."
           fi
