@@ -261,8 +261,10 @@ in `config.json` to send it automatically on every run (e.g. from weekly cron).
 
 ## 🚨 Market alert system (instant Telegram alerts)
 
-`alerts` watches the market. Its daily Telegram message = **new event lines (if any)
-followed by the CAR result table** (same columns/order as your reference sheet):
+`alerts` runs after market close and sends **one Telegram message per day:
+only the CAR result table** (same columns/order as your reference sheet).
+Alert events (table below) are still detected — you see them in the
+console/Actions run log, never in Telegram:
 
 | Alert | Fires when | Example |
 |---|---|---|
@@ -272,9 +274,10 @@ followed by the CAR result table** (same columns/order as your reference sheet):
 | ⚡ **Daily move** | price moves ≥ `daily_move_pct` (default 3%) vs previous close | `📈 NSE:AXISBANK +3.0% (1186.50 → 1222.40)` |
 
 **De-duplication:** every event gets a key like `gtt:ETERNAL:2026-W38` or
-`move:AXISBANK:2026-09-25`, stored in `logs/alerts_state.json`. Re-runs (every
-hour!) never send the same alert twice. The state also remembers the last CAR
-positive set so flips can be detected even without a prior report run.
+`move:AXISBANK:2026-09-25`, stored in `logs/alerts_state.json` — re-runs never
+detect the same event twice, and `summary:{date}` guarantees at most one
+Telegram message per day. The state also remembers the last CAR positive set
+so flips can be detected even without a prior report run.
 
 ### Run locally
 
@@ -348,9 +351,9 @@ Work through this checklist in order:
 6. **Quiet-day silence is gone**: with `alerts.daily_summary: true` (default) the
    scheduled run sends the **daily CAR result table** (same columns as the sheet:
    `NSE Code | CMP | Difference from 200 DMA | CAR Rating | Trigger Price for GTT`,
-   sorted by difference ascending) **every day after 5 PM**, even with 0 events —
-   new event lines (if any) are prepended to the same message. At most one routine
-   message per day. Disable with `--no-summary` if you prefer silence.
+   sorted by difference ascending) **every day after 5 PM**, even with 0 events.
+   The table is the ONLY thing Telegram receives (≤1 message/day) — alert events
+   appear in the run log instead. Disable with `--no-summary` for silence.
 
 ## 🕘 Making it run automatically — 3 options
 
@@ -435,7 +438,7 @@ docker run -d --name repo-alerts --restart unless-stopped \
 | `report.send_telegram` | Auto-send the report as a Telegram message on every `report` run | `false` |
 | `alerts.enabled` | Master switch for the alert engine | `true` |
 | `alerts.send_telegram` | Send detected alerts to Telegram (off = print/log only) | `true` |
-| `alerts.daily_summary` | Send the daily CAR result table on the 5 PM run even with 0 events (≤1 routine msg/day) | `true` |
+| `alerts.daily_summary` | Send the daily CAR result table as the day's only Telegram message | `true` |
 | `alerts.gtt_trigger` | Alert when a CAR-positive stock crosses last week's high | `true` |
 | `alerts.car_flip` | Alert when CAR flips positive 🟢 / negative 🔴 | `true` |
 | `alerts.daily_move_pct` | Alert on daily move ≥ this % (0 disables) | `3.0` |
