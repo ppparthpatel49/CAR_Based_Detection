@@ -249,7 +249,9 @@ of every signal. By default only CAR-positive stocks are logged (`--log-all` for
 
 **2️⃣ Telegram message** (`--telegram`): a formatted table mirroring your sheet —
 NSE Code · CMP · Difference from 200 DMA · CAR Rating · Trigger Price for GTT,
-rows sorted by difference ascending — plus limit/qty per stock,
+rows sorted by difference ascending. The trigger = the **last completed
+Mon–Fri week's intraday high** (the level your GTT sits at all week — it does
+not drift mid-week). Plus limit/qty per stock,
 near-misses, log reference and disclaimer. Set `"send_telegram": true` under `report`
 in `config.json` to send it automatically on every run (e.g. from weekly cron).
 
@@ -268,7 +270,7 @@ console/Actions run log, never in Telegram:
 
 | Alert | Fires when | Example |
 |---|---|---|
-| 🚨 **GTT trigger crossed** | a CAR-positive stock's price reaches last week's high (the GTT level) | `🚨 NSE:ETERNAL crossed its GTT trigger 329.75 — now 335.0 (limit 329.85, qty 15)` |
+| 🚨 **GTT trigger crossed** | a CAR-positive stock's price reaches last week's high (the GTT level) | `🚨 NSE:GAIL crossed its GTT trigger 174.38 — now 174.90 (limit 174.48, qty 29)` |
 | 🟢 **CAR flipped positive** | a stock turns `Buy/Average Out` | `🟢 NSE:PNB CAR flipped POSITIVE (streak 41d, CMP 116.6)` |
 | 🔴 **CAR flipped negative** | a held/watched stock turns `Avoid Hold` → delete pending GTT | `🔴 NSE:TATASTEEL CAR flipped NEGATIVE → Avoid Hold` |
 | ⚡ **Daily move** | price moves ≥ `daily_move_pct` (default 3%) vs previous close | `📈 NSE:AXISBANK +3.0% (1186.50 → 1222.40)` |
