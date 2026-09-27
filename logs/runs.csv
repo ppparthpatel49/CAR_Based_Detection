@@ -1,1 +1,2 @@
 run_timestamp,outcome,msg_kind,events_detected,events_filtered,skip_reason,positives,data_as_of,week_start,week_end,state_saved
+2026-09-27 22:31:05,sent,daily,3,0,,6,2026-09-25,2026-09-21,2026-09-25,yes
