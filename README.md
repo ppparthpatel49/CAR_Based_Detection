@@ -51,6 +51,8 @@ telegram-repo-alerts/
 │       └── latest_prices.csv          symbol,date,close
 ├── logs/
 │   ├── car_log.csv                ← 📜 append-only history of weekly CAR results
+│   ├── runs.csv                   ← 🧾 one row per alerts run: outcome, events, send result
+│   ├── failures.csv               ← ⚠️ Telegram send errors (de-dup state NOT burned)
 │   └── alerts_state.json          ← 🛡️ alert de-dup state (auto-committed by Actions)
 ├── config.json                    ← repo, schedule, data lists, event filters
 ├── pyproject.toml                 ← installable package + `repo-alerts` command
@@ -280,6 +282,13 @@ console/Actions run log, never in Telegram:
 detect the same event twice, and `summary:{date}` guarantees at most one
 Telegram message per day. The state also remembers the last CAR positive set
 so flips can be detected even without a prior report run.
+
+**Run journals (committed back by Actions):** every non-dry run appends one row
+to `logs/runs.csv` — `outcome` (`sent` / `recorded` / `skipped` / `failed`),
+events detected & filtered, skip reason, week and `state_saved`. A Telegram
+error also appends one row to `logs/failures.csv` **without** burning the
+de-dup keys. Delivery history is then auditable straight from git history —
+no digging through Actions logs.
 
 ### Run locally
 
