@@ -21,6 +21,11 @@ De-duplication: every alert gets a key (type:symbol:period) stored in
 `logs/alerts_state.json`; the GitHub Actions workflow commits it back so it
 survives across ephemeral runners.
 
+Journals: `logs/runs.csv` gets one row per non-dry run (outcome:
+sent/recorded/skipped/failed + events + week) and `logs/failures.csv` one row
+per Telegram send error (state is NOT burned) — both committed back by the
+workflow, so delivery history lives in git.
+
 CRITICAL ORDERING (bug fixed): credentials are validated and the Telegram
 message is SENT *before* any state is written. A failed/missing-credential
 send therefore never marks alerts as "sent" — they are retried next run.
@@ -29,6 +34,7 @@ Standard library only (yfinance is used indirectly via market_data).
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 from datetime import datetime, timedelta
@@ -79,6 +85,30 @@ def _prune_sent(state: dict) -> None:
         if when >= cutoff:
             keep[key] = ts
     state["sent"] = keep
+
+
+# ------------------------------------------------------------------------ journals
+RUNS_PATH = ROOT / "logs" / "runs.csv"
+FAILURES_PATH = ROOT / "logs" / "failures.csv"
+RUNS_COLUMNS = [
+    "run_timestamp", "outcome", "msg_kind", "events_detected", "events_filtered",
+    "skip_reason", "positives", "data_as_of", "week_start", "week_end", "state_saved",
+]
+FAILURES_COLUMNS = ["run_timestamp", "error", "msg_kind", "events_detected"]
+
+
+def _append_journal(path: Path, columns: list[str], row: dict) -> None:
+    """Best-effort append to a journal CSV — must never break the alert run."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists() or path.stat().st_size == 0
+        with open(path, "a", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=columns)
+            if write_header:
+                w.writeheader()
+            w.writerow({c: row.get(c, "") for c in columns})
+    except OSError:
+        pass
 
 
 # ------------------------------------------------------------------- computations
@@ -269,11 +299,28 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
     # --- 7) SEND FIRST, then persist state (bug fix) -------------------------
     message_sent = False
     if message and send and not dry_run:
-        token, chat_id, thread_id = cfg.telegram_credentials(require=True)  # BEFORE any state write
-        send_text(message, token=token, chat_id=chat_id, thread_id=thread_id)
-        message_sent = True
-        for k in new_keys:
-            sent[k] = now.isoformat(timespec="seconds")
+        try:
+            token, chat_id, thread_id = cfg.telegram_credentials(require=True)  # BEFORE any state write
+            send_text(message, token=token, chat_id=chat_id, thread_id=thread_id)
+            message_sent = True
+            for k in new_keys:
+                sent[k] = now.isoformat(timespec="seconds")
+        except (Exception, SystemExit) as exc:
+            # journal the failure; state stays untouched (retries next run).
+            # SystemExit included: missing creds sys.exit()s instead of raising.
+            ts = now.strftime("%Y-%m-%d %H:%M:%S")
+            _append_journal(FAILURES_PATH, FAILURES_COLUMNS, {
+                "run_timestamp": ts, "error": str(exc)[:300],
+                "msg_kind": msg_kind, "events_detected": len(alerts)})
+            _append_journal(RUNS_PATH, RUNS_COLUMNS, {
+                "run_timestamp": ts, "outcome": "failed", "msg_kind": msg_kind,
+                "events_detected": len(alerts), "events_filtered": filtered,
+                "skip_reason": str(exc)[:300],
+                "positives": len(report["positives"]),
+                "data_as_of": report["data_as_of"],
+                "week_start": report["week_start"], "week_end": report["week_end"],
+                "state_saved": "no"})
+            raise
     elif message and not send and not dry_run:
         print(message)        # explicit --no-send / send_telegram=false: record only
         for k in new_keys:
@@ -291,6 +338,15 @@ def check_alerts(config: dict | None = None, *, refresh: bool = True,
     if not dry_run:
         save_state(state_file, state)
         persisted = True
+        outcome = "sent" if message_sent else ("recorded" if message else "skipped")
+        _append_journal(RUNS_PATH, RUNS_COLUMNS, {
+            "run_timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "outcome": outcome, "msg_kind": msg_kind,
+            "events_detected": len(alerts), "events_filtered": filtered,
+            "skip_reason": skip_reason, "positives": len(report["positives"]),
+            "data_as_of": report["data_as_of"],
+            "week_start": report["week_start"], "week_end": report["week_end"],
+            "state_saved": "yes"})
 
     return {"alerts": alerts, "count": len(alerts), "filtered": filtered,
             "baseline": baseline, "positives": sorted(positives),

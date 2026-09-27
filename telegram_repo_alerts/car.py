@@ -167,18 +167,28 @@ def run_analysis(prices_path: str | Path, car_days: int = 10,
 
 # --------------------------------------------------------------------------- log
 def append_log(report: dict, log_path: str | Path, log_all: bool = False) -> int:
-    """Append this run's rows to the log CSV. Returns number of rows written."""
+    """Append this run's rows to the log CSV. Rows identical to an already
+    logged snapshot (same values, ignoring run_timestamp) are skipped, so
+    re-running the same report never duplicates the history.
+    Returns number of NEW rows written."""
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = report["results"] if log_all else report["positives"]
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    value_cols = [c for c in LOG_COLUMNS if c != "run_timestamp"]
+    existing: set = set()
+    if path.exists() and path.stat().st_size:
+        with open(path, newline="", encoding="utf-8") as fh:
+            for old_row in csv.DictReader(fh):
+                existing.add(tuple(old_row.get(c, "") for c in value_cols))
     write_header = not path.exists() or path.stat().st_size == 0
+    written = 0
     with open(path, "a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=LOG_COLUMNS)
         if write_header:
             w.writeheader()
         for r in rows:
-            w.writerow({
+            row = {
                 "run_timestamp": stamp,
                 "iso_week": f"{report['iso_year']}-W{report['iso_week']:02d}",
                 "week_start": report["week_start"],
@@ -194,8 +204,14 @@ def append_log(report: dict, log_path: str | Path, log_all: bool = False) -> int
                 "year_high_date": r["year_high_date"],
                 "year_high_close": r["year_high"],
                 "price_source": "yfinance daily close",
-            })
-    return len(rows)
+            }
+            key = tuple(str(row[c]) for c in value_cols)
+            if key in existing:
+                continue
+            existing.add(key)
+            w.writerow(row)
+            written += 1
+    return written
 
 
 # --------------------------------------------------------------------- rendering
