@@ -1,7 +1,2 @@
 run_timestamp,iso_week,week_start,week_end,nse_code,cmp,diff_200dma_pct,car_rating,gtt_trigger,gtt_limit,qty_5000,car_streak,year_high_date,year_high_close,price_source
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:BAJAJHLDNG,10940.0,2.44,Buy/Average Out,11449.0,11449.1,1,45,2025-10-23,13144.0,yfinance daily close
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:ETERNAL,335.0,21.47,Buy/Average Out,344.4,344.5,15,63,2025-10-15,354.35,yfinance daily close
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:GAIL,172.7,3.91,Buy/Average Out,174.38,174.48,29,90,2025-11-17,185.3,yfinance daily close
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:KOTAKBANK,404.0,1.05,Buy/Average Out,420.6,420.7,12,23,2025-10-23,445.12,yfinance daily close
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:PNB,116.6,1.93,Buy/Average Out,118.9,119.0,43,41,2026-01-16,132.36,yfinance daily close
-2026-09-26 17:08:14,2026-W39,2026-09-21,2026-09-25,NSE:TECHM,1548.0,1.97,Buy/Average Out,1576.2,1576.3,4,56,2026-01-29,1768.4,yfinance daily close
+
