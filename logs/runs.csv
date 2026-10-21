@@ -23,3 +23,4 @@ run_timestamp,outcome,msg_kind,events_detected,events_filtered,skip_reason,posit
 2026-10-18 20:04:00,sent,daily,0,7,,1,2026-10-16,2026-10-12,2026-10-16,yes
 2026-10-19 22:58:16,sent,daily,7,0,,0,2026-10-19,2026-10-12,2026-10-16,yes
 2026-10-20 21:09:02,sent,daily,0,6,,0,2026-10-19,2026-10-12,2026-10-16,yes
+2026-10-21 21:26:49,sent,daily,13,0,,1,2026-10-21,2026-10-12,2026-10-16,yes
