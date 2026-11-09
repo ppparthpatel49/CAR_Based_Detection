@@ -42,3 +42,4 @@ run_timestamp,outcome,msg_kind,events_detected,events_filtered,skip_reason,posit
 2026-11-06 23:26:56,skipped,,13,2,daily CAR result already sent today (use --force to re-send),5,2026-11-06,2026-11-02,2026-11-06,yes
 2026-11-07 22:20:21,sent,daily,13,0,,5,2026-11-06,2026-11-02,2026-11-06,yes
 2026-11-08 22:31:53,sent,daily,4,0,,7,2026-11-08,2026-11-02,2026-11-06,yes
+2026-11-10 02:56:13,sent,daily,10,1,,6,2026-11-09,2026-11-02,2026-11-06,yes
